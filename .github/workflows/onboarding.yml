@@ -1,0 +1,136 @@
+name: Create Repository and Push Code
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: 'Name of the repository to create'
+        required: true
+      private:
+        description: 'Is the repo private? (true/false)'
+        required: true
+        default: 'true'
+      ORG_NAME:
+        description: 'GitHub org or username where repo will be created'
+        required: true
+      ZIP_URL:
+        description: 'URL of the zip file to download and push'
+        required: true
+      ZIP_FILE:
+        description: 'Name of the zip file'
+        required: true
+      ORG_GITHUB_TOKEN:
+        description: 'GitHub token with repo and workflow scopes'
+        required: true
+      resourcetype:
+        description: 'Resource type (apis, sharedflow, kong, microservice)'
+        required: false
+        default: 'microservice'
+
+jobs:
+  create-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # ===== STEP 1: Create the repository =====
+      - name: Create GitHub Repository
+        id: create_repo
+        run: |
+          echo "::group::Creating repository ${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}"
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ github.event.inputs.ORG_GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }} \
+            -d "{\"private\": ${{ github.event.inputs.private }}, \"auto_init\": false}")
+          
+          echo "Response: $RESPONSE"
+          if echo "$RESPONSE" | grep -q '"id"'; then
+            echo "✅ Repository created successfully."
+            echo "REPO_URL=https://github.com/${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}" >> $GITHUB_ENV
+          else
+            echo "❌ Failed to create repository. Response: $RESPONSE"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      # ===== STEP 2: Clone the newly created repo =====
+      - name: Clone Repository
+        id: clone_repo
+        run: |
+          echo "::group::Cloning ${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}"
+          git clone https://${{ github.event.inputs.ORG_GITHUB_TOKEN }}@github.com/${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}.git repo-clone
+          if [ $? -eq 0 ]; then
+            echo "✅ Clone successful."
+          else
+            echo "❌ Clone failed."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      # ===== STEP 3: Download the ZIP =====
+      - name: Download ZIP Archive
+        id: download_zip
+        run: |
+          echo "::group::Downloading ZIP from ${{ github.event.inputs.ZIP_URL }}"
+          cd repo-clone
+          wget -O code.zip "${{ github.event.inputs.ZIP_URL }}"
+          if [ -f code.zip ]; then
+            echo "✅ ZIP downloaded successfully."
+            ls -lh code.zip
+          else
+            echo "❌ Download failed."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      # ===== STEP 4: Unzip the archive =====
+      - name: Unzip Archive
+        id: unzip
+        run: |
+          echo "::group::Unzipping archive"
+          cd repo-clone
+          unzip -o code.zip
+          if [ $? -eq 0 ]; then
+            echo "✅ Unzip successful."
+            rm code.zip
+            echo "✅ code.zip removed."
+          else
+            echo "❌ Unzip failed."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      # ===== STEP 5: Configure Git =====
+      - name: Configure Git
+        run: |
+          echo "::group::Configuring Git"
+          git config --global user.email "forgesphere-bot@probestack.io"
+          git config --global user.name "ForgeSphere Bot"
+          echo "✅ Git configured."
+          echo "::endgroup::"
+
+      # ===== STEP 6: Push the code =====
+      - name: Push Code to Repository
+        id: push_code
+        run: |
+          echo "::group::Pushing code to ${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}"
+          cd repo-clone
+          git add .
+          git commit -m "Initial commit from ForgeSphere – generated code for ${{ github.event.inputs.resourcetype }}"
+          git push origin main
+          if [ $? -eq 0 ]; then
+            echo "✅ Code pushed successfully."
+          else
+            echo "❌ Push failed."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      # ===== FINAL SUMMARY =====
+      - name: Success Summary
+        run: |
+          echo "==========================================="
+          echo "🎉 All steps completed successfully!"
+          echo "📦 Repository: ${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}"
+          echo "🔗 URL: https://github.com/${{ github.event.inputs.ORG_NAME }}/${{ github.event.inputs.repo_name }}"
+          echo "📁 Resource Type: ${{ github.event.inputs.resourcetype }}"
+          echo "==========================================="
